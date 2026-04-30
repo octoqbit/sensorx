@@ -18,14 +18,13 @@
   import { getFirestore, doc, setDoc, getDoc, collection, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
   const firebaseConfig = {
-  apiKey: "AIzaSyCfqqsId4MbEmW6cuGirWrqf2rZQu6YtHU",
-  authDomain: "sensors-club.firebaseapp.com",
-  projectId: "sensors-club",
-  storageBucket: "sensors-club.firebasestorage.app",
-  messagingSenderId: "742317163051",
-  appId: "1:742317163051:web:23c856a33c41d6bbe0a06e",
-  measurementId: "G-J24HQR9T6B"
-};
+    apiKey: "AIzaSyCfqqsId4MbEmW6cuGirWrqf2rZQu6YtHU",
+    authDomain: "sensors-club.firebaseapp.com",
+    projectId: "sensors-club",
+    storageBucket: "sensors-club.firebasestorage.app",
+    messagingSenderId: "742317163051",
+    appId: "1:742317163051:web:23c856a33c41d6bbe0a06e"
+  };
 
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
@@ -320,17 +319,6 @@ nav{background:rgba(10,14,26,0.95);border-bottom:1px solid var(--border2);paddin
     </div>
   </div>
 </nav>
-
-<div class="page">
-
-  <!-- ── CONFIG WARNING (visible until Firebase is set up) ── -->
-  <div class="config-warn" id="config-warning">
-    <div class="config-warn-icon">⚙️</div>
-    <div class="config-warn-text">
-      <strong>One-time setup required before this page works</strong>
-      Open this file in VS Code and find the section that says <code>PASTE_YOUR_API_KEY_HERE</code> (near the top). Replace all 6 values with your Firebase project credentials. See the <strong>SETUP-GUIDE.html</strong> file for full step-by-step instructions with screenshots.
-    </div>
-  </div>
 
   <div class="notice">
     ⚠ <strong>Notice:</strong> SensorX is an independent student initiative. College affiliation is pending approval.
