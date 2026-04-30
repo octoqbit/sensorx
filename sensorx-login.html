@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SensorX — Member Portal</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+
+<!-- ============================================================
+  STEP 3: PASTE YOUR FIREBASE CONFIG HERE
+  (Replace ONLY the values inside quotes — keep the format)
+  You get this from Firebase Console > Project Settings > Your Apps
+  Full guide in SETUP-GUIDE.html
+============================================================ -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { getFirestore, doc, setDoc, getDoc, collection, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+  apiKey: "AIzaSyCfqqsId4MbEmW6cuGirWrqf2rZQu6YtHU",
+  authDomain: "sensors-club.firebaseapp.com",
+  projectId: "sensors-club",
+  storageBucket: "sensors-club.firebasestorage.app",
+  messagingSenderId: "742317163051",
+  appId: "1:742317163051:web:23c856a33c41d6bbe0a06e",
+  measurementId: "G-J24HQR9T6B"
+};
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  // ── helpers ──────────────────────────────────────────────
+  function showMsg(id, msg, isError) {
+    const el = document.getElementById(id);
+    el.textContent = msg;
+    el.style.color = isError ? '#FF6B2B' : '#00FF88';
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 4000);
+  }
+
+  function generateStudentId(count) {
+    return 'SX-' + String(count + 1).padStart(4, '0');
+  }
+
+  // ── SIGN UP ───────────────────────────────────────────────
+  window.doSignup = async function() {
+    const name     = document.getElementById('su-name').value.trim();
+    const email    = document.getElementById('su-email').value.trim();
+    const branch   = document.getElementById('su-branch').value.trim();
+    const roll     = document.getElementById('su-roll').value.trim();
+    const password = document.getElementById('su-pass').value;
+
+    if (!name || !email || !branch || !roll || !password) {
+      showMsg('signup-msg', 'Please fill in all fields.', true); return;
+    }
+    if (password.length < 6) {
+      showMsg('signup-msg', 'Password must be at least 6 characters.', true); return;
+    }
+
+    document.getElementById('signup-btn').textContent = 'Creating account…';
+    document.getElementById('signup-btn').disabled = true;
+
+    try {
+      // count existing members to assign next ID
+      const membersSnap = await getDocs(collection(db, 'members'));
+      const studentId = generateStudentId(membersSnap.size);
+
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+
+      await setDoc(doc(db, 'members', cred.user.uid), {
+        uid: cred.user.uid,
+        name, email, branch, roll,
+        studentId,
+        role: 'member',
+        joinedAt: new Date().toISOString(),
+        coursesCompleted: [],
+        attendanceCount: 0
+      });
+
+      showMsg('signup-msg', `Welcome ${name}! Your ID is ${studentId}`, false);
+      document.getElementById('su-name').value = '';
+      document.getElementById('su-email').value = '';
+      document.getElementById('su-branch').value = '';
+      document.getElementById('su-roll').value = '';
+      document.getElementById('su-pass').value = '';
+    } catch (e) {
+      const msgs = {
+        'auth/email-already-in-use': 'This email is already registered.',
+        'auth/invalid-email': 'Please enter a valid email address.',
+        'auth/weak-password': 'Password is too weak — use at least 6 characters.'
+      };
+      showMsg('signup-msg', msgs[e.code] || e.message, true);
+    } finally {
+      document.getElementById('signup-btn').textContent = 'Create Profile & Get Student ID';
+      document.getElementById('signup-btn').disabled = false;
+    }
+  };
+
+  // ── LOGIN ─────────────────────────────────────────────────
+  window.doLogin = async function() {
+    const email    = document.getElementById('li-email').value.trim();
+    const password = document.getElementById('li-pass').value;
+
+    if (!email || !password) {
+      showMsg('login-msg', 'Please enter email and password.', true); return;
+    }
+
+    document.getElementById('login-btn').textContent = 'Logging in…';
+    document.getElementById('login-btn').disabled = true;
+
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (e) {
+      const msgs = {
+        'auth/user-not-found': 'No account found with this email.',
+        'auth/wrong-password': 'Incorrect password.',
+        'auth/invalid-credential': 'Email or password is incorrect.',
+        'auth/too-many-requests': 'Too many attempts. Please wait a moment.'
+      };
+      showMsg('login-msg', msgs[e.code] || e.message, true);
+    } finally {
+      document.getElementById('login-btn').textContent = 'Login to Dashboard';
+      document.getElementById('login-btn').disabled = false;
+    }
+  };
+
+  // ── LOGOUT ────────────────────────────────────────────────
+  window.doLogout = async function() {
+    await signOut(auth);
+  };
+
+  // ── LOAD MEMBER DIRECTORY ─────────────────────────────────
+  async function loadDirectory() {
+    const list = document.getElementById('member-list');
+    list.innerHTML = '<p style="color:var(--muted);font-size:0.82rem;">Loading members…</p>';
+    try {
+      const snap = await getDocs(query(collection(db, 'members'), orderBy('joinedAt')));
+      if (snap.empty) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:0.82rem;">No members yet. Be the first to join!</p>';
+        return;
+      }
+      list.innerHTML = '';
+      snap.forEach(d => {
+        const m = d.data();
+        const initials = m.name.split(' ').map(w => w[0]).join('').substring(0,2).toUpperCase();
+        const colors = ['#00FF88','#FF6B2B','#C084FC','#38BDF8','#FBBF24'];
+        const bg = colors[Math.abs(m.studentId.charCodeAt(3)) % colors.length];
+        const roleColor = m.role === 'admin' ? '#FF6B2B' : m.role === 'mentor' ? '#38BDF8' : '#00FF88';
+        list.innerHTML += `
+          <div class="student-card">
+            <div class="s-avatar" style="background:${bg}22;color:${bg};">${initials}</div>
+            <div class="s-info">
+              <div class="s-name">${m.name}</div>
+              <div class="s-id">${m.studentId} · ${m.branch}</div>
+            </div>
+            <span class="s-badge" style="background:${roleColor}18;color:${roleColor};border:1px solid ${roleColor}30;">
+              ${m.role.charAt(0).toUpperCase()+m.role.slice(1)}
+            </span>
+          </div>`;
+      });
+    } catch(e) {
+      list.innerHTML = `<p style="color:#FF6B2B;font-size:0.82rem;">Could not load members. Check your Firebase config.</p>`;
+    }
+  }
+
+  // ── AUTH STATE LISTENER ───────────────────────────────────
+  onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      // logged in — fetch profile
+      const snap = await getDoc(doc(db, 'members', user.uid));
+      if (snap.exists()) {
+        const m = snap.data();
+        document.getElementById('auth-section').style.display   = 'none';
+        document.getElementById('dashboard-section').style.display = 'block';
+
+        const initials = m.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+        document.getElementById('dash-initials').textContent   = initials;
+        document.getElementById('dash-name').textContent       = m.name;
+        document.getElementById('dash-studentid').textContent  = m.studentId;
+        document.getElementById('dash-email').textContent      = m.email;
+        document.getElementById('dash-branch').textContent     = m.branch;
+        document.getElementById('dash-roll').textContent       = m.roll;
+        document.getElementById('dash-role').textContent       = m.role.charAt(0).toUpperCase()+m.role.slice(1);
+        document.getElementById('dash-joined').textContent     = new Date(m.joinedAt).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'});
+        document.getElementById('dash-courses').textContent    = (m.coursesCompleted||[]).length;
+        document.getElementById('dash-attendance').textContent = m.attendanceCount || 0;
+        loadDirectory();
+      }
+    } else {
+      document.getElementById('auth-section').style.display   = 'block';
+      document.getElementById('dashboard-section').style.display = 'none';
+    }
+  });
+
+  // tab switching
+  window.switchTab = function(btn, tab) {
+    document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('signup-form').style.display = tab === 'signup' ? 'block' : 'none';
+    document.getElementById('login-form').style.display  = tab === 'login'  ? 'block' : 'none';
+  };
+
+  // enter key support
+  window.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const sf = document.getElementById('signup-form');
+    const lf = document.getElementById('login-form');
+    if (sf && sf.style.display !== 'none') window.doSignup();
+    else if (lf && lf.style.display !== 'none') window.doLogin();
+  });
+</script>
+
+<style>
+:root{
+  --primary:#00FF88;--primary-dark:#00CC6A;--accent:#FF6B2B;
+  --bg:#0A0E1A;--bg2:#0F1525;--bg3:#151E35;
+  --card:#111827;--card2:#1A2540;
+  --border:rgba(0,255,136,0.15);--border2:rgba(255,255,255,0.07);
+  --text:#E8F0FF;--muted:#7A90B8;
+  --mono:'Space Mono',monospace;--sans:'Outfit',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;flex-direction:column;}
+
+/* NAV */
+nav{background:rgba(10,14,26,0.95);border-bottom:1px solid var(--border2);padding:0 2rem;position:sticky;top:0;z-index:100;}
+.nav-inner{max-width:1100px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;height:60px;}
+.logo{font-family:var(--mono);font-size:1rem;color:var(--primary);text-decoration:none;letter-spacing:2px;}
+.logo span{color:var(--accent);}
+.nav-right{display:flex;align-items:center;gap:1rem;}
+.nav-tag{font-family:var(--mono);font-size:0.65rem;color:var(--muted);letter-spacing:1px;}
+
+/* LAYOUT */
+.page{max-width:1100px;margin:0 auto;padding:3rem 2rem;flex:1;}
+
+/* NOTICE */
+.notice{background:rgba(255,107,43,0.07);border:1px solid rgba(255,107,43,0.2);border-radius:10px;padding:0.9rem 1.2rem;margin-bottom:2rem;font-size:0.8rem;color:#FFB899;line-height:1.6;}
+.notice strong{color:var(--accent);}
+
+/* CONFIG WARNING */
+.config-warn{background:rgba(255,107,43,0.1);border:2px solid rgba(255,107,43,0.4);border-radius:12px;padding:1.2rem 1.5rem;margin-bottom:2rem;display:flex;gap:1rem;align-items:flex-start;}
+.config-warn-icon{font-size:1.4rem;flex-shrink:0;margin-top:2px;}
+.config-warn-text{font-size:0.83rem;color:#FFB899;line-height:1.7;}
+.config-warn-text strong{color:var(--accent);font-size:0.9rem;display:block;margin-bottom:4px;}
+.config-warn-text code{background:rgba(255,107,43,0.15);padding:1px 6px;border-radius:4px;font-family:var(--mono);font-size:0.75rem;color:#FFA07A;}
+
+/* AUTH SECTION */
+.auth-grid{display:grid;grid-template-columns:1fr 1fr;gap:2.5rem;align-items:start;}
+.auth-tabs{display:flex;background:var(--card);border:1px solid var(--border2);border-radius:10px;padding:3px;width:fit-content;margin-bottom:1.5rem;}
+.auth-tab{padding:7px 22px;border-radius:8px;font-size:0.88rem;font-weight:600;cursor:pointer;transition:all .2s;border:none;background:transparent;color:var(--muted);}
+.auth-tab.active{background:var(--primary);color:#000;}
+.auth-form{background:var(--card);border:1px solid var(--border2);border-radius:16px;padding:2rem;}
+.auth-form h3{font-size:1.05rem;font-weight:700;margin-bottom:1.4rem;}
+.form-group{margin-bottom:1rem;}
+.form-label{display:block;font-size:0.75rem;font-weight:600;margin-bottom:5px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;}
+.form-input{width:100%;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:9px 13px;color:var(--text);font-family:var(--sans);font-size:0.88rem;transition:border-color .2s;outline:none;}
+.form-input:focus{border-color:var(--primary);}
+.form-input::placeholder{color:var(--muted);}
+.form-btn{width:100%;background:var(--primary);color:#000;font-weight:700;padding:11px;border-radius:9px;border:none;cursor:pointer;font-size:0.92rem;font-family:var(--sans);transition:all .2s;margin-top:0.4rem;}
+.form-btn:hover{background:var(--primary-dark);}
+.form-btn:disabled{opacity:0.5;cursor:not-allowed;}
+.form-msg{display:none;font-size:0.8rem;margin-top:0.7rem;font-weight:600;padding:8px 12px;border-radius:7px;background:rgba(0,0,0,0.3);}
+
+/* MEMBER DIRECTORY PANEL */
+.dir-panel{background:var(--card);border:1px solid var(--border2);border-radius:16px;padding:2rem;}
+.dir-panel h3{font-size:1rem;font-weight:700;margin-bottom:1.4rem;color:var(--muted);}
+.student-card{background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:0.9rem 1rem;display:flex;align-items:center;gap:0.9rem;margin-bottom:0.7rem;}
+.s-avatar{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8rem;flex-shrink:0;}
+.s-info{flex:1;}
+.s-name{font-weight:600;font-size:0.88rem;}
+.s-id{font-family:var(--mono);font-size:0.68rem;color:var(--muted);margin-top:1px;}
+.s-badge{font-size:0.65rem;padding:3px 9px;border-radius:10px;font-weight:600;white-space:nowrap;}
+
+/* DASHBOARD */
+#dashboard-section{display:none;}
+.dash-header{background:var(--card);border:1px solid var(--border2);border-radius:16px;padding:2rem;margin-bottom:2rem;display:flex;align-items:center;gap:2rem;flex-wrap:wrap;}
+.dash-avatar{width:72px;height:72px;border-radius:50%;background:rgba(0,255,136,0.12);border:2px solid rgba(0,255,136,0.3);display:flex;align-items:center;justify-content:center;font-size:1.6rem;font-weight:700;color:var(--primary);flex-shrink:0;}
+.dash-info{flex:1;}
+.dash-name{font-size:1.5rem;font-weight:800;margin-bottom:4px;}
+.dash-studentid{font-family:var(--mono);font-size:1rem;color:var(--primary);margin-bottom:6px;}
+.dash-meta{font-size:0.82rem;color:var(--muted);}
+.dash-logout{background:transparent;border:1px solid var(--border2);color:var(--muted);padding:8px 18px;border-radius:8px;cursor:pointer;font-family:var(--sans);font-size:0.82rem;transition:all .2s;}
+.dash-logout:hover{border-color:var(--accent);color:var(--accent);}
+
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem;margin-bottom:2rem;}
+.stat-card{background:var(--card);border:1px solid var(--border2);border-radius:12px;padding:1.2rem;}
+.stat-label{font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
+.stat-val{font-family:var(--mono);font-size:1.6rem;font-weight:700;color:var(--primary);}
+.stat-sub{font-size:0.72rem;color:var(--muted);margin-top:3px;}
+
+.dash-grid{display:grid;grid-template-columns:1fr 1fr;gap:2rem;}
+.dash-card{background:var(--card);border:1px solid var(--border2);border-radius:16px;padding:1.8rem;}
+.dash-card h3{font-size:0.95rem;font-weight:700;margin-bottom:1.2rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;}
+.info-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.85rem;}
+.info-row:last-child{border-bottom:none;}
+.info-key{color:var(--muted);}
+.info-val{font-weight:600;text-align:right;}
+
+/* page heading */
+.page-heading{margin-bottom:0.5rem;}
+.page-tag{font-family:var(--mono);font-size:0.68rem;color:var(--primary);letter-spacing:3px;text-transform:uppercase;margin-bottom:0.4rem;}
+.page-title{font-size:2rem;font-weight:900;letter-spacing:-1px;}
+.page-sub{font-size:0.95rem;color:var(--muted);margin-top:0.4rem;margin-bottom:2rem;}
+
+@media(max-width:768px){
+  .auth-grid,.dash-grid{grid-template-columns:1fr;}
+  .dash-header{flex-direction:column;text-align:center;}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="logo">SENSOR<span>X</span></a>
+    <div class="nav-right">
+      <span class="nav-tag">MEMBER PORTAL</span>
+    </div>
+  </div>
+</nav>
+
+<div class="page">
+
+  <!-- ── CONFIG WARNING (visible until Firebase is set up) ── -->
+  <div class="config-warn" id="config-warning">
+    <div class="config-warn-icon">⚙️</div>
+    <div class="config-warn-text">
+      <strong>One-time setup required before this page works</strong>
+      Open this file in VS Code and find the section that says <code>PASTE_YOUR_API_KEY_HERE</code> (near the top). Replace all 6 values with your Firebase project credentials. See the <strong>SETUP-GUIDE.html</strong> file for full step-by-step instructions with screenshots.
+    </div>
+  </div>
+
+  <div class="notice">
+    ⚠ <strong>Notice:</strong> SensorX is an independent student initiative. College affiliation is pending approval.
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!--  AUTH SECTION (shown when logged out)                 -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div id="auth-section">
+    <div class="page-tag">// member portal</div>
+    <h1 class="page-title">Login & Sign Up</h1>
+    <p class="page-sub">Create your profile to get your Student ID, access resources, and track your progress.</p>
+
+    <div class="auth-grid">
+      <!-- Forms -->
+      <div>
+        <div class="auth-tabs">
+          <button class="auth-tab active" onclick="switchTab(this,'signup')">Sign Up</button>
+          <button class="auth-tab" onclick="switchTab(this,'login')">Log In</button>
+        </div>
+
+        <!-- SIGN UP FORM -->
+        <div class="auth-form" id="signup-form">
+          <h3>Create Your Account</h3>
+          <div class="form-group">
+            <label class="form-label">Full Name</label>
+            <input type="text" id="su-name" class="form-input" placeholder="e.g. Rahul Sharma">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Email Address</label>
+            <input type="email" id="su-email" class="form-input" placeholder="your@email.com">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Branch & Year</label>
+            <input type="text" id="su-branch" class="form-input" placeholder="e.g. ECE — 2nd Year">
+          </div>
+          <div class="form-group">
+            <label class="form-label">College Roll Number</label>
+            <input type="text" id="su-roll" class="form-input" placeholder="Your roll number">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password (min 6 chars)</label>
+            <input type="password" id="su-pass" class="form-input" placeholder="Create a password">
+          </div>
+          <button class="form-btn" id="signup-btn" onclick="doSignup()">Create Profile &amp; Get Student ID</button>
+          <div class="form-msg" id="signup-msg"></div>
+        </div>
+
+        <!-- LOGIN FORM -->
+        <div class="auth-form" id="login-form" style="display:none;">
+          <h3>Welcome Back</h3>
+          <div class="form-group">
+            <label class="form-label">Email Address</label>
+            <input type="email" id="li-email" class="form-input" placeholder="your@email.com">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <input type="password" id="li-pass" class="form-input" placeholder="Your password">
+          </div>
+          <button class="form-btn" id="login-btn" onclick="doLogin()">Login to Dashboard</button>
+          <div class="form-msg" id="login-msg"></div>
+        </div>
+      </div>
+
+      <!-- Member Directory -->
+      <div class="dir-panel">
+        <h3>Member Directory</h3>
+        <div id="member-list">
+          <p style="color:var(--muted);font-size:0.82rem;">Log in to view the member directory.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!--  DASHBOARD (shown when logged in)                     -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div id="dashboard-section">
+
+    <!-- Profile Header -->
+    <div class="dash-header">
+      <div class="dash-avatar" id="dash-initials">?</div>
+      <div class="dash-info">
+        <div class="dash-name" id="dash-name">—</div>
+        <div class="dash-studentid" id="dash-studentid">—</div>
+        <div class="dash-meta"><span id="dash-role">—</span> · Joined <span id="dash-joined">—</span></div>
+      </div>
+      <button class="dash-logout" onclick="doLogout()">Log Out</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Courses Completed</div>
+        <div class="stat-val" id="dash-courses">0</div>
+        <div class="stat-sub">of 6 available</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Sessions Attended</div>
+        <div class="stat-val" id="dash-attendance">0</div>
+        <div class="stat-sub">tracked by admin</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Certificates</div>
+        <div class="stat-val">0</div>
+        <div class="stat-sub">complete courses to earn</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Club Status</div>
+        <div class="stat-val" style="font-size:1rem;margin-top:6px;">Active ✓</div>
+        <div class="stat-sub">member in good standing</div>
+      </div>
+    </div>
+
+    <!-- Profile Info + Directory -->
+    <div class="dash-grid">
+      <div class="dash-card">
+        <h3>Your Profile</h3>
+        <div class="info-row"><span class="info-key">Email</span><span class="info-val" id="dash-email">—</span></div>
+        <div class="info-row"><span class="info-key">Branch / Year</span><span class="info-val" id="dash-branch">—</span></div>
+        <div class="info-row"><span class="info-key">Roll Number</span><span class="info-val" id="dash-roll">—</span></div>
+        <div class="info-row"><span class="info-key">Student ID</span><span class="info-val" style="font-family:var(--mono);color:var(--primary);" id="dash-studentid2"></span></div>
+        <div class="info-row"><span class="info-key">Role</span><span class="info-val" id="dash-role2">—</span></div>
+      </div>
+
+      <div class="dash-card">
+        <h3>All Members</h3>
+        <div id="member-list-dash">
+          <p style="color:var(--muted);font-size:0.82rem;">Loading…</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // Mirror studentid to second element in dashboard
+  const obs = new MutationObserver(() => {
+    const v = document.getElementById('dash-studentid').textContent;
+    document.getElementById('dash-studentid2').textContent = v;
+    document.getElementById('dash-role2').textContent = document.getElementById('dash-role').textContent;
+  });
+  const target = document.getElementById('dash-studentid');
+  if (target) obs.observe(target, { childList: true, characterData: true, subtree: true });
+
+  // Mirror member list to dashboard panel
+  const memberObs = new MutationObserver(() => {
+    document.getElementById('member-list-dash').innerHTML =
+      document.getElementById('member-list').innerHTML;
+  });
+  const mTarget = document.getElementById('member-list');
+  if (mTarget) memberObs.observe(mTarget, { childList: true, subtree: true });
+</script>
+
+</body>
+</html>
