@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SensorX — Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<script>
+  const SUPABASE_URL  = 'https://zjhizjrktonuibzaisvg.supabase.co';
+  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpqaGl6anJrdG9udWliemFpc3ZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MjUzODUsImV4cCI6MjA5MzIwMTM4NX0.VLtlk_yzBGpWb8f8hSNlrAawcR0TqjzvNBvoFZjxFnM';
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+let currentUser = null;
+let memberData  = null;s
+
+// ── AUTH GUARD ─────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { window.location.href = 'login.html'; return; }
+  currentUser = session.user;
+  await loadProfile();
+  await loadAttendance();
+  await loadNotes();
+  await loadCertificates();
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('app').style.display     = 'block';
+});
+
+// ── LOAD PROFILE ───────────────────────────────────────────────
+async function loadProfile() {
+  const { data, error } = await sb.from('members').select('*').eq('id', currentUser.id).single();
+  if (error || !data) { window.location.href = 'login.html'; return; }
+  memberData = data;
+
+  const initials = data.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+  setText('prof-initials', initials);
+  setText('prof-name', data.name);
+  setText('prof-id', data.student_id);
+  setText('prof-email', data.email);
+  setText('prof-branch', data.branch);
+  setText('prof-roll', data.roll);
+  setText('prof-role', capitalize(data.role));
+  setText('prof-joined', new Date(data.created_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'}));
+  setText('nav-name', data.name.split(' ')[0]);
+  setText('nav-id', data.student_id);
+}
+
+// ── LOAD ATTENDANCE ────────────────────────────────────────────
+async function loadAttendance() {
+  const { data, error } = await sb.from('attendance').select('*').eq('member_id', currentUser.id).order('session_date', { ascending:false });
+  const list = document.getElementById('att-list');
+  if (error || !data || data.length === 0) {
+    list.innerHTML = '<div class="empty-state">No attendance records yet. Attend a session to see your record here.</div>';
+    setText('att-count', '0');
+    setText('att-pct', '—');
+    return;
+  }
+  const present = data.filter(r => r.status === 'present').length;
+  const total   = data.length;
+  const pct     = Math.round((present/total)*100);
+  setText('att-count', present);
+  setText('att-pct', pct + '%');
+  setText('att-total', total);
+
+  list.innerHTML = data.map(r => `
+    <div class="att-row">
+      <div class="att-date">${new Date(r.session_date).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</div>
+      <div class="att-session">${r.session_name || 'Club Session'}</div>
+      <div class="att-status ${r.status === 'present' ? 'present' : 'absent'}">${r.status === 'present' ? 'Present ✓' : 'Absent'}</div>
+    </div>`).join('');
+}
+
+// ── LOAD NOTES ─────────────────────────────────────────────────
+async function loadNotes() {
+  const { data, error } = await sb.from('notes').select('*').order('created_at', { ascending:false });
+  const grid = document.getElementById('notes-grid');
+  if (error || !data || data.length === 0) {
+    grid.innerHTML = '<div class="empty-state">No notes uploaded yet. Check back soon.</div>';
+    return;
+  }
+  grid.innerHTML = data.map(n => `
+    <div class="note-card">
+      <div class="note-type">${n.type || 'PDF'}</div>
+      <div class="note-title">${n.title}</div>
+      <div class="note-desc">${n.description || ''}</div>
+      <div class="note-footer">
+        <span class="note-size">${n.file_size || ''}</span>
+        <a href="${n.file_url}" target="_blank" class="note-dl">Download ↓</a>
+      </div>
+    </div>`).join('');
+}
+
+// ── LOAD CERTIFICATES ──────────────────────────────────────────
+async function loadCertificates() {
+  const { data, error } = await sb.from('certificates').select('*').eq('member_id', currentUser.id);
+  const grid = document.getElementById('cert-grid');
+  if (error || !data || data.length === 0) {
+    grid.innerHTML = '<div class="empty-state">No certificates yet. Complete a course to earn your first certificate.</div>';
+    setText('cert-count', '0');
+    return;
+  }
+  setText('cert-count', data.length);
+  grid.innerHTML = data.map(c => `
+    <div class="cert-card">
+      <div class="cert-icon">🏅</div>
+      <div class="cert-body">
+        <div class="cert-title">${c.course_name}</div>
+        <div class="cert-sub">Issued ${new Date(c.issued_at).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</div>
+        <div class="cert-id">Cert ID: ${c.cert_id}</div>
+      </div>
+      <a href="${c.cert_url || '#'}" target="_blank" class="cert-dl">View →</a>
+    </div>`).join('');
+}
+
+// ── LOGOUT ─────────────────────────────────────────────────────
+async function doLogout() {
+  await sb.auth.signOut();
+  window.location.href = 'login.html';
+}
+
+// ── TABS ───────────────────────────────────────────────────────
+function showTab(tab) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.style.display = 'none');
+  document.querySelectorAll('.sidebar-link').forEach(l => l.classList.remove('active'));
+  document.getElementById('pane-' + tab).style.display = 'block';
+  document.getElementById('link-' + tab).classList.add('active');
+}
+
+function setText(id, val) { const el=document.getElementById(id); if(el) el.textContent=val; }
+function capitalize(s) { return s ? s.charAt(0).toUpperCase()+s.slice(1) : ''; }
+
+// ── COURSES DATA (static — admin manages real content via Supabase) ──
+const COURSES = [
+  { id:1, title:'Electronics Fundamentals', level:'Beginner', modules:6, hours:8, locked:false,
+    yt:'https://www.youtube.com/results?search_query=electronics+fundamentals+beginners',
+    desc:'Ohm\'s law, resistors, capacitors, LEDs, breadboards. The absolute foundation.' },
+  { id:2, title:'Arduino Basics', level:'Beginner', modules:8, hours:12, locked:false,
+    yt:'https://www.youtube.com/results?search_query=arduino+tutorial+beginners',
+    desc:'Arduino IDE, digital & analog I/O, PWM, serial communication, first sensor projects.' },
+  { id:3, title:'Sensors & Actuators', level:'Intermediate', modules:10, hours:18, locked:true,
+    yt:'https://www.youtube.com/results?search_query=arduino+sensors+actuators+tutorial',
+    desc:'DHT11/22, ultrasonic, PIR, IR, LDR, servo motors, relays. 20+ real sensors.' },
+  { id:4, title:'IoT & Wireless Systems', level:'Intermediate', modules:8, hours:14, locked:true,
+    yt:'https://www.youtube.com/results?search_query=esp32+iot+mqtt+tutorial',
+    desc:'ESP8266, ESP32, Wi-Fi, MQTT, cloud dashboards, remote sensor systems.' },
+  { id:5, title:'PCB Design & Prototyping', level:'Advanced', modules:6, hours:10, locked:true,
+    yt:'https://www.youtube.com/results?search_query=kicad+pcb+design+beginners',
+    desc:'KiCad/EasyEDA — schematic capture, layout, gerbers, real board ordering.' },
+  { id:6, title:'Smart Systems & Automation', level:'Advanced', modules:5, hours:20, locked:true,
+    yt:'https://www.youtube.com/results?search_query=arduino+home+automation+iot+project',
+    desc:'Capstone: home automation, smart agriculture, industrial monitoring.' },
+];
+
+window.addEventListener('DOMContentLoaded', () => {
+  const grid = document.getElementById('courses-grid');
+  if (!grid) return;
+  grid.innerHTML = COURSES.map(c => `
+    <div class="course-card ${c.locked ? 'locked' : ''}">
+      <div class="course-top">
+        <span class="course-level lv-${c.level.toLowerCase().replace(' ','-')}">${c.level}</span>
+        ${c.locked ? '<span class="lock-badge">🔒</span>' : '<span class="lock-badge free-badge">✓ Unlocked</span>'}
+      </div>
+      <div class="course-title">${c.title}</div>
+      <div class="course-desc">${c.desc}</div>
+      <div class="course-stats">
+        <span class="cs">${c.modules} modules</span>
+        <span class="cs">${c.hours} hrs</span>
+      </div>
+      ${c.locked
+        ? `<div class="course-locked-msg">Complete previous courses to unlock</div>`
+        : `<a href="${c.yt}" target="_blank" class="yt-btn">▶ Watch YouTube Lectures</a>`
+      }
+    </div>`).join('');
+});
+</script>
+
+<style>
+:root{
+  --g1:#0D0D0D;--g2:#111318;--g3:#16191F;--g4:#1C2028;
+  --accent:#39FF14;--accent2:#FF3E3E;--accent3:#3E8EFF;
+  --border:rgba(255,255,255,0.06);--border-bright:rgba(57,255,20,0.2);
+  --text:#F0F2F5;--muted:#6B7385;--muted2:#9AA3B2;
+  --display:'Syne',sans-serif;--body:'DM Sans',sans-serif;--mono:'DM Mono',monospace;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--g1);color:var(--text);font-family:var(--body);min-height:100vh;display:grid;grid-template-columns:240px 1fr;grid-template-rows:60px 1fr;}
+
+/* TOPBAR */
+.topbar{grid-column:1/-1;background:var(--g2);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 1.5rem;}
+.topbar-logo{font-family:var(--display);font-size:1rem;font-weight:800;text-decoration:none;color:var(--text);display:flex;align-items:center;gap:7px;}
+.logo-dot{width:7px;height:7px;background:var(--accent);border-radius:50%;box-shadow:0 0 8px var(--accent);animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+.topbar-right{display:flex;align-items:center;gap:1rem;}
+.topbar-user{display:flex;flex-direction:column;align-items:flex-end;}
+.topbar-name{font-size:.85rem;font-weight:600;}
+.topbar-id{font-family:var(--mono);font-size:.65rem;color:var(--accent);}
+.logout-btn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:6px 14px;border-radius:7px;cursor:pointer;font-family:var(--body);font-size:.78rem;transition:all .2s;}
+.logout-btn:hover{border-color:var(--accent2);color:var(--accent2);}
+
+/* SIDEBAR */
+.sidebar{background:var(--g2);border-right:1px solid var(--border);padding:1.5rem 0;display:flex;flex-direction:column;gap:2px;}
+.sidebar-label{font-family:var(--mono);font-size:.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--muted);padding:.5rem 1.5rem;margin-top:.5rem;}
+.sidebar-link{display:flex;align-items:center;gap:10px;padding:.7rem 1.5rem;font-size:.85rem;font-weight:500;color:var(--muted2);text-decoration:none;cursor:pointer;background:none;border:none;width:100%;text-align:left;font-family:var(--body);transition:all .15s;border-radius:0;position:relative;}
+.sidebar-link:hover{color:var(--text);background:rgba(255,255,255,0.03);}
+.sidebar-link.active{color:var(--accent);background:rgba(57,255,20,0.06);}
+.sidebar-link.active::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent);border-radius:0 2px 2px 0;}
+.sidebar-icon{font-size:1rem;width:20px;text-align:center;}
+
+/* MAIN */
+.main{padding:2rem 2.5rem;overflow-y:auto;max-height:calc(100vh - 60px);}
+.tab-pane{display:none;}
+.tab-pane:first-child{display:block;}
+
+/* OVERVIEW */
+.overview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem;margin-bottom:2rem;}
+.stat-card{background:var(--g3);border:1px solid var(--border);border-radius:12px;padding:1.2rem;}
+.stat-label{font-family:var(--mono);font-size:.65rem;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:.5rem;}
+.stat-val{font-family:var(--display);font-size:1.8rem;font-weight:800;color:var(--accent);}
+.stat-sub{font-size:.72rem;color:var(--muted);margin-top:.2rem;}
+
+/* PROFILE CARD */
+.profile-card{background:var(--g3);border:1px solid var(--border);border-radius:14px;padding:2rem;display:flex;gap:2rem;align-items:flex-start;margin-bottom:2rem;flex-wrap:wrap;}
+.prof-avatar{width:64px;height:64px;border-radius:50%;background:rgba(57,255,20,0.1);border:2px solid rgba(57,255,20,0.25);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:1.3rem;font-weight:800;color:var(--accent);flex-shrink:0;}
+.prof-info{flex:1;}
+.prof-name{font-family:var(--display);font-size:1.3rem;font-weight:800;margin-bottom:3px;}
+.prof-id{font-family:var(--mono);color:var(--accent);font-size:.85rem;margin-bottom:.8rem;}
+.prof-rows{display:grid;grid-template-columns:1fr 1fr;gap:.4rem .5rem;}
+.prof-row{font-size:.82rem;color:var(--muted2);}
+.prof-row strong{color:var(--text);margin-left:4px;}
+
+/* SECTION HEADING */
+.sh{font-family:var(--display);font-size:1.1rem;font-weight:800;margin-bottom:1.2rem;display:flex;align-items:center;gap:.5rem;}
+.sh-tag{font-family:var(--mono);font-size:.62rem;letter-spacing:2px;text-transform:uppercase;color:var(--accent);background:rgba(57,255,20,.07);border:1px solid rgba(57,255,20,.15);padding:2px 10px;border-radius:10px;}
+
+/* COURSES */
+.courses-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;}
+.course-card{background:var(--g3);border:1px solid var(--border);border-radius:12px;padding:1.4rem;transition:border-color .2s;}
+.course-card:hover{border-color:var(--border-bright);}
+.course-card.locked{opacity:.6;}
+.course-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:.9rem;}
+.course-level{font-family:var(--mono);font-size:.6rem;letter-spacing:1.5px;text-transform:uppercase;padding:3px 9px;border-radius:20px;}
+.lv-beginner{background:rgba(57,255,20,.08);color:var(--accent);border:1px solid rgba(57,255,20,.2);}
+.lv-intermediate{background:rgba(62,142,255,.08);color:var(--accent3);border:1px solid rgba(62,142,255,.2);}
+.lv-advanced{background:rgba(255,62,62,.08);color:#FF8080;border:1px solid rgba(255,62,62,.2);}
+.lock-badge{font-size:.72rem;color:var(--muted);}
+.free-badge{color:var(--accent)!important;}
+.course-title{font-family:var(--display);font-weight:700;font-size:.95rem;margin-bottom:.4rem;}
+.course-desc{font-size:.8rem;color:var(--muted2);line-height:1.6;margin-bottom:.9rem;}
+.course-stats{display:flex;gap:.8rem;margin-bottom:.9rem;}
+.cs{font-family:var(--mono);font-size:.68rem;color:var(--muted);}
+.yt-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(255,0,0,.1);border:1px solid rgba(255,0,0,.2);color:#FF8080;font-size:.78rem;font-weight:600;padding:7px 12px;border-radius:7px;text-decoration:none;transition:all .2s;}
+.yt-btn:hover{background:rgba(255,0,0,.18);}
+.course-locked-msg{font-size:.75rem;color:var(--muted);font-style:italic;}
+
+/* NOTES */
+.notes-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1rem;}
+.note-card{background:var(--g3);border:1px solid var(--border);border-radius:12px;padding:1.3rem;transition:border-color .2s;}
+.note-card:hover{border-color:var(--border-bright);}
+.note-type{font-family:var(--mono);font-size:.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--accent);margin-bottom:.5rem;}
+.note-title{font-family:var(--display);font-weight:700;font-size:.9rem;margin-bottom:.35rem;}
+.note-desc{font-size:.78rem;color:var(--muted2);line-height:1.55;margin-bottom:.9rem;}
+.note-footer{display:flex;justify-content:space-between;align-items:center;padding-top:.8rem;border-top:1px solid var(--border);}
+.note-size{font-family:var(--mono);font-size:.65rem;color:var(--muted);}
+.note-dl{font-size:.78rem;font-weight:600;color:var(--accent);text-decoration:none;}
+.note-dl:hover{text-decoration:underline;}
+
+/* ATTENDANCE */
+.att-summary{display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;}
+.att-stat{background:var(--g3);border:1px solid var(--border);border-radius:10px;padding:1rem 1.4rem;flex:1;min-width:120px;}
+.att-stat-val{font-family:var(--display);font-size:1.6rem;font-weight:800;color:var(--accent);}
+.att-stat-label{font-size:.72rem;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;margin-top:2px;}
+.att-table{background:var(--g3);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+.att-row{display:grid;grid-template-columns:80px 1fr 100px;align-items:center;padding:.75rem 1.2rem;border-bottom:1px solid rgba(255,255,255,0.03);font-size:.82rem;}
+.att-row:last-child{border-bottom:none;}
+.att-date{font-family:var(--mono);font-size:.72rem;color:var(--muted);}
+.att-session{color:var(--muted2);}
+.att-status{text-align:right;font-family:var(--mono);font-size:.72rem;font-weight:600;}
+.present{color:var(--accent);}
+.absent{color:var(--accent2);}
+
+/* CERTIFICATES */
+.cert-grid{display:flex;flex-direction:column;gap:.8rem;}
+.cert-card{background:var(--g3);border:1px solid rgba(57,255,20,.15);border-radius:12px;padding:1.2rem 1.5rem;display:flex;align-items:center;gap:1.2rem;}
+.cert-icon{font-size:1.5rem;flex-shrink:0;}
+.cert-body{flex:1;}
+.cert-title{font-family:var(--display);font-weight:700;font-size:.95rem;margin-bottom:2px;}
+.cert-sub{font-size:.78rem;color:var(--muted2);}
+.cert-id{font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-top:3px;}
+.cert-dl{font-size:.8rem;font-weight:600;color:var(--accent);text-decoration:none;white-space:nowrap;}
+.cert-dl:hover{text-decoration:underline;}
+
+/* UTILS */
+.empty-state{background:var(--g3);border:1px dashed var(--border);border-radius:12px;padding:2.5rem;text-align:center;font-size:.85rem;color:var(--muted);}
+.loading{display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:var(--mono);font-size:.8rem;color:var(--muted);}
+.page-title{font-family:var(--display);font-size:1.5rem;font-weight:800;margin-bottom:.3rem;}
+.page-sub{font-size:.85rem;color:var(--muted2);margin-bottom:1.8rem;}
+
+@media(max-width:768px){
+  body{grid-template-columns:1fr;grid-template-rows:60px auto 1fr;}
+  .sidebar{grid-row:2;flex-direction:row;overflow-x:auto;padding:.5rem;border-right:none;border-bottom:1px solid var(--border);}
+  .sidebar-label{display:none;}
+  .sidebar-link{padding:.5rem .8rem;border-radius:8px;font-size:.78rem;white-space:nowrap;}
+  .sidebar-link.active::before{display:none;}
+  .main{padding:1.5rem;}
+  .prof-rows{grid-template-columns:1fr;}
+}
+</style>
+</head>
+<body>
+
+<div id="loading" class="loading">Loading your dashboard…</div>
+
+<div id="app" style="display:none;display:grid;grid-template-columns:240px 1fr;grid-template-rows:60px 1fr;width:100%;min-height:100vh;">
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <a href="index.html" class="topbar-logo"><span class="logo-dot"></span>SensorX</a>
+  <div class="topbar-right">
+    <div class="topbar-user">
+      <span class="topbar-name" id="nav-name">—</span>
+      <span class="topbar-id" id="nav-id">—</span>
+    </div>
+    <button class="logout-btn" onclick="doLogout()">Log Out</button>
+  </div>
+</div>
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <span class="sidebar-label">Main</span>
+  <button class="sidebar-link active" id="link-overview" onclick="showTab('overview')"><span class="sidebar-icon">◈</span> Overview</button>
+  <button class="sidebar-link" id="link-profile" onclick="showTab('profile')"><span class="sidebar-icon">◉</span> My Profile</button>
+
+  <span class="sidebar-label">Learning</span>
+  <button class="sidebar-link" id="link-courses" onclick="showTab('courses')"><span class="sidebar-icon">▣</span> Courses</button>
+  <button class="sidebar-link" id="link-notes" onclick="showTab('notes')"><span class="sidebar-icon">◫</span> Notes & Files</button>
+  <button class="sidebar-link" id="link-certs" onclick="showTab('certs')"><span class="sidebar-icon">◎</span> Certificates</button>
+
+  <span class="sidebar-label">Activity</span>
+  <button class="sidebar-link" id="link-attendance" onclick="showTab('attendance')"><span class="sidebar-icon">◷</span> Attendance</button>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- ── OVERVIEW ── -->
+  <div class="tab-pane" id="pane-overview">
+    <div class="page-title">Welcome back, <span id="prof-name-overview" style="color:var(--accent)"></span></div>
+    <p class="page-sub" id="prof-id-overview" style="font-family:var(--mono);font-size:.75rem;color:var(--muted);"></p>
+
+    <div class="overview-grid">
+      <div class="stat-card"><div class="stat-label">Student ID</div><div class="stat-val" style="font-size:1.2rem;" id="stat-id">—</div></div>
+      <div class="stat-card"><div class="stat-label">Sessions Attended</div><div class="stat-val" id="att-count">—</div><div class="stat-sub">of <span id="att-total">0</span> total</div></div>
+      <div class="stat-card"><div class="stat-label">Attendance %</div><div class="stat-val" id="att-pct">—</div><div class="stat-sub">70% required</div></div>
+      <div class="stat-card"><div class="stat-label">Certificates</div><div class="stat-val" id="cert-count">0</div><div class="stat-sub">earned so far</div></div>
+    </div>
+
+    <div class="sh">Quick Links <span class="sh-tag">Start Here</span></div>
+    <div style="display:flex;gap:.8rem;flex-wrap:wrap;">
+      <button onclick="showTab('courses')" style="background:var(--g3);border:1px solid var(--border);color:var(--text);padding:10px 18px;border-radius:9px;cursor:pointer;font-family:var(--body);font-size:.85rem;font-weight:600;transition:border-color .2s;" onmouseover="this.style.borderColor='rgba(57,255,20,.3)'" onmouseout="this.style.borderColor='rgba(255,255,255,.06)'">📖 Browse Courses</button>
+      <button onclick="showTab('notes')" style="background:var(--g3);border:1px solid var(--border);color:var(--text);padding:10px 18px;border-radius:9px;cursor:pointer;font-family:var(--body);font-size:.85rem;font-weight:600;transition:border-color .2s;" onmouseover="this.style.borderColor='rgba(57,255,20,.3)'" onmouseout="this.style.borderColor='rgba(255,255,255,.06)'">📄 Download Notes</button>
+      <button onclick="showTab('attendance')" style="background:var(--g3);border:1px solid var(--border);color:var(--text);padding:10px 18px;border-radius:9px;cursor:pointer;font-family:var(--body);font-size:.85rem;font-weight:600;transition:border-color .2s;" onmouseover="this.style.borderColor='rgba(57,255,20,.3)'" onmouseout="this.style.borderColor='rgba(255,255,255,.06)'">📅 View Attendance</button>
+      <button onclick="showTab('certs')" style="background:var(--g3);border:1px solid var(--border);color:var(--text);padding:10px 18px;border-radius:9px;cursor:pointer;font-family:var(--body);font-size:.85rem;font-weight:600;transition:border-color .2s;" onmouseover="this.style.borderColor='rgba(57,255,20,.3)'" onmouseout="this.style.borderColor='rgba(255,255,255,.06)'">🏅 My Certificates</button>
+    </div>
+  </div>
+
+  <!-- ── PROFILE ── -->
+  <div class="tab-pane" id="pane-profile">
+    <div class="page-title">My Profile</div>
+    <p class="page-sub">Your SensorX member details.</p>
+    <div class="profile-card">
+      <div class="prof-avatar" id="prof-initials">?</div>
+      <div class="prof-info">
+        <div class="prof-name" id="prof-name">—</div>
+        <div class="prof-id" id="prof-id">—</div>
+        <div class="prof-rows">
+          <div class="prof-row">Email <strong id="prof-email">—</strong></div>
+          <div class="prof-row">Branch <strong id="prof-branch">—</strong></div>
+          <div class="prof-row">Roll No. <strong id="prof-roll">—</strong></div>
+          <div class="prof-row">Role <strong id="prof-role">—</strong></div>
+          <div class="prof-row">Joined <strong id="prof-joined">—</strong></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── COURSES ── -->
+  <div class="tab-pane" id="pane-courses">
+    <div class="page-title">Courses & Learning Paths</div>
+    <p class="page-sub">Beginner to advanced. Unlocked courses include YouTube lecture links and notes.</p>
+    <div class="courses-grid" id="courses-grid"></div>
+  </div>
+
+  <!-- ── NOTES ── -->
+  <div class="tab-pane" id="pane-notes">
+    <div class="page-title">Notes & Study Files</div>
+    <p class="page-sub">All course notes, datasheets, code files, and workshop slides. Upload managed by admin.</p>
+    <div class="notes-grid" id="notes-grid">
+      <div class="empty-state">Loading notes…</div>
+    </div>
+  </div>
+
+  <!-- ── ATTENDANCE ── -->
+  <div class="tab-pane" id="pane-attendance">
+    <div class="page-title">My Attendance</div>
+    <p class="page-sub">Maintain 70% attendance to remain eligible for certificates.</p>
+    <div class="att-summary">
+      <div class="att-stat"><div class="att-stat-val" id="att-count2">—</div><div class="att-stat-label">Present</div></div>
+      <div class="att-stat"><div class="att-stat-val" id="att-pct2">—</div><div class="att-stat-label">Attendance %</div></div>
+    </div>
+    <div class="att-table" id="att-list"><div class="empty-state">Loading attendance…</div></div>
+  </div>
+
+  <!-- ── CERTIFICATES ── -->
+  <div class="tab-pane" id="pane-certs">
+    <div class="page-title">My Certificates</div>
+    <p class="page-sub">Certificates issued by SensorX Club after completing each course.</p>
+    <div class="cert-grid" id="cert-grid"><div class="empty-state">Loading certificates…</div></div>
+  </div>
+
+</div>
+</div>
+
+<script>
+// sync overview name after profile loads
+const profNameEl = document.getElementById('prof-name');
+if (profNameEl) {
+  new MutationObserver(() => {
+    const v = profNameEl.textContent;
+    const el = document.getElementById('prof-name-overview');
+    if (el) el.textContent = v;
+  }).observe(profNameEl, {childList:true,characterData:true,subtree:true});
+}
+const profIdEl = document.getElementById('prof-id');
+if (profIdEl) {
+  new MutationObserver(() => {
+    const v = profIdEl.textContent;
+    const el1 = document.getElementById('prof-id-overview');
+    const el2 = document.getElementById('stat-id');
+    if (el1) el1.textContent = v;
+    if (el2) el2.textContent = v;
+  }).observe(profIdEl, {childList:true,characterData:true,subtree:true});
+}
+// sync attendance to pane-attendance
+const attCount = document.getElementById('att-count');
+const attPct   = document.getElementById('att-pct');
+if (attCount) new MutationObserver(()=>{ const e=document.getElementById('att-count2'); if(e) e.textContent=attCount.textContent; }).observe(attCount,{childList:true,characterData:true,subtree:true});
+if (attPct)   new MutationObserver(()=>{ const e=document.getElementById('att-pct2');   if(e) e.textContent=attPct.textContent;   }).observe(attPct,  {childList:true,characterData:true,subtree:true});
+</script>
+</body>
+</html>
